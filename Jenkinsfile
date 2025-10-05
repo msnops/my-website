@@ -3,9 +3,7 @@ pipeline {
 
     environment {
         DOCKER_REGISTRY = 'docker.io'
-        DOCKER_REPO = 'devops-academy'
-        IMAGE_NAME = 'frontend'
-        HELM_CHART_PATH = './frontend/helm'
+        DOCKER_REPO = 'saas-academy'
         K8S_NAMESPACE = 'default'
         GIT_COMMIT_SHORT = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
     }
@@ -18,17 +16,15 @@ pipeline {
             }
         }
 
-        stage('Install Dependencies') {
+        stage('Install Frontend Dependencies') {
             steps {
                 script {
-                    sh '''
-                        npm ci
-                    '''
+                    sh 'npm ci'
                 }
             }
         }
 
-        stage('Run Tests') {
+        stage('Run Frontend Tests') {
             steps {
                 script {
                     sh '''
@@ -39,30 +35,61 @@ pipeline {
             }
         }
 
-        stage('Build Application') {
+        stage('Build Frontend Application') {
             steps {
                 script {
-                    sh '''
-                        npm run build
-                    '''
+                    sh 'npm run build'
                 }
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Build Frontend Docker Image') {
             steps {
                 script {
                     sh """
                         docker build -f frontend/Dockerfile \
-                            -t ${DOCKER_REGISTRY}/${DOCKER_REPO}/${IMAGE_NAME}:${GIT_COMMIT_SHORT} \
-                            -t ${DOCKER_REGISTRY}/${DOCKER_REPO}/${IMAGE_NAME}:latest \
+                            -t ${DOCKER_REGISTRY}/${DOCKER_REPO}/frontend:${GIT_COMMIT_SHORT} \
+                            -t ${DOCKER_REGISTRY}/${DOCKER_REPO}/frontend:latest \
                             .
                     """
                 }
             }
         }
 
-        stage('Push Docker Image') {
+        stage('Install Backend Dependencies') {
+            steps {
+                dir('backend') {
+                    script {
+                        sh 'npm ci'
+                    }
+                }
+            }
+        }
+
+        stage('Build Backend Application') {
+            steps {
+                dir('backend') {
+                    script {
+                        sh 'npm run build'
+                    }
+                }
+            }
+        }
+
+        stage('Build Backend Docker Image') {
+            steps {
+                script {
+                    sh """
+                        docker build -f backend/Dockerfile \
+                            -t ${DOCKER_REGISTRY}/${DOCKER_REPO}/backend:${GIT_COMMIT_SHORT} \
+                            -t ${DOCKER_REGISTRY}/${DOCKER_REPO}/backend:latest \
+                            backend/
+                    """
+                }
+            }
+        }
+
+        stage('Push Docker Images') {
             when {
                 branch 'main'
             }
@@ -73,8 +100,10 @@ pipeline {
                                                      passwordVariable: 'DOCKER_PASS')]) {
                         sh """
                             echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin ${DOCKER_REGISTRY}
-                            docker push ${DOCKER_REGISTRY}/${DOCKER_REPO}/${IMAGE_NAME}:${GIT_COMMIT_SHORT}
-                            docker push ${DOCKER_REGISTRY}/${DOCKER_REPO}/${IMAGE_NAME}:latest
+                            docker push ${DOCKER_REGISTRY}/${DOCKER_REPO}/frontend:${GIT_COMMIT_SHORT}
+                            docker push ${DOCKER_REGISTRY}/${DOCKER_REPO}/frontend:latest
+                            docker push ${DOCKER_REGISTRY}/${DOCKER_REPO}/backend:${GIT_COMMIT_SHORT}
+                            docker push ${DOCKER_REGISTRY}/${DOCKER_REPO}/backend:latest
                         """
                     }
                 }
@@ -84,14 +113,32 @@ pipeline {
         stage('Helm Lint') {
             steps {
                 script {
-                    sh """
-                        helm lint ${HELM_CHART_PATH}
-                    """
+                    sh '''
+                        helm lint ./frontend/helm
+                        helm lint ./backend/helm
+                        helm lint ./infra/helm/myapp
+                    '''
                 }
             }
         }
 
-        stage('Deploy to Kubernetes') {
+        stage('Deploy PostgreSQL') {
+            when {
+                branch 'main'
+            }
+            steps {
+                script {
+                    withKubeConfig([credentialsId: 'kubernetes-config']) {
+                        sh '''
+                            kubectl apply -f infra/k8s/postgresql.yaml
+                            kubectl wait --for=condition=ready pod -l app=postgres -n database --timeout=300s
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Deploy Backend') {
             when {
                 branch 'main'
             }
@@ -99,7 +146,26 @@ pipeline {
                 script {
                     withKubeConfig([credentialsId: 'kubernetes-config']) {
                         sh """
-                            helm upgrade --install devops-academy-frontend ${HELM_CHART_PATH} \
+                            helm upgrade --install saas-academy-backend ./backend/helm \
+                                --namespace ${K8S_NAMESPACE} \
+                                --set image.tag=${GIT_COMMIT_SHORT} \
+                                --wait \
+                                --timeout 5m
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Deploy Frontend') {
+            when {
+                branch 'main'
+            }
+            steps {
+                script {
+                    withKubeConfig([credentialsId: 'kubernetes-config']) {
+                        sh """
+                            helm upgrade --install saas-academy-frontend ./frontend/helm \
                                 --namespace ${K8S_NAMESPACE} \
                                 --set image.tag=${GIT_COMMIT_SHORT} \
                                 --wait \
@@ -117,8 +183,10 @@ pipeline {
             steps {
                 script {
                     sh """
-                        kubectl rollout status deployment/devops-academy-frontend -n ${K8S_NAMESPACE}
-                        kubectl get pods -n ${K8S_NAMESPACE} -l app=devops-academy-frontend
+                        kubectl rollout status deployment/saas-academy-backend -n ${K8S_NAMESPACE}
+                        kubectl rollout status deployment/saas-academy-frontend -n ${K8S_NAMESPACE}
+                        kubectl get pods -n ${K8S_NAMESPACE}
+                        kubectl get pods -n database
                     """
                 }
             }
@@ -131,11 +199,10 @@ pipeline {
             steps {
                 script {
                     sh """
-                        # Wait for service to be ready
                         sleep 10
-                        # Get service endpoint and test
-                        ENDPOINT=\$(kubectl get ingress devops-academy-frontend-ingress -n ${K8S_NAMESPACE} -o jsonpath='{.spec.rules[0].host}')
-                        curl -f http://\$ENDPOINT || exit 1
+                        kubectl get svc -n ${K8S_NAMESPACE}
+                        BACKEND_SVC=\$(kubectl get svc saas-academy-backend -n ${K8S_NAMESPACE} -o jsonpath='{.spec.clusterIP}')
+                        curl -f http://\$BACKEND_SVC:3000/health || exit 1
                     """
                 }
             }
@@ -150,7 +217,7 @@ pipeline {
                 body: """Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' completed successfully.
 
                 Check console output at ${env.BUILD_URL}""",
-                to: 'devops@academy.com'
+                to: 'devops@saasacademy.com'
             )
         }
         failure {
@@ -160,7 +227,7 @@ pipeline {
                 body: """Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' failed.
 
                 Check console output at ${env.BUILD_URL}""",
-                to: 'devops@academy.com'
+                to: 'devops@saasacademy.com'
             )
         }
         always {
