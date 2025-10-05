@@ -98,7 +98,7 @@ pipeline {
                     withKubeConfig([credentialsId: 'jenkins-kubeconfig', variable: 'KUBECONFIG']) {
                         sh """
                           set -x
-                          kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                          kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f - --validate=false
                           helm upgrade --install ${IMAGE_NAME} ${HELM_CHART_PATH} \
                             --namespace ${K8S_NAMESPACE} \
                             --set image.repository=${DOCKER_REGISTRY}/${DOCKER_REPO}/${IMAGE_NAME} \
