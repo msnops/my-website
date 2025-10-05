@@ -95,10 +95,14 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 script {
-                    withKubeConfig([credentialsId: 'jenkins-kubeconfig', variable: 'KUBECONFIG']) {
+                    withKubeConfig([credentialsId: 'jenkins-kubeconfig']) {
                         sh """
                           set -x
-                          kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f - --validate=false
+	            
+                          # Ensure the namespace exists
+                          kubectl get ns ${K8S_NAMESPACE} || kubectl create ns ${K8S_NAMESPACE}
+	            
+                          # Deploy/update Helm chart
                           helm upgrade --install ${IMAGE_NAME} ${HELM_CHART_PATH} \
                             --namespace ${K8S_NAMESPACE} \
                             --set image.repository=${DOCKER_REGISTRY}/${DOCKER_REPO}/${IMAGE_NAME} \
@@ -108,7 +112,6 @@ pipeline {
                         """
                     }
                 }
-            }
         }
 
         stage('Verify Deployment') {
