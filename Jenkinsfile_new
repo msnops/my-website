@@ -95,7 +95,7 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 script {
-                    withKubeConfig([credentialsId: 'jenkins-kubeconfig']) {
+                    withKubeConfig([credentialsId: 'jenkins-kubeconfig', variable: 'KUBECONFIG']) {
                         sh """
                           set -x
                           kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
