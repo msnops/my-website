@@ -1,9 +1,11 @@
 replicaCount: 3
 
 image:
-  repository: devops-academy/frontend
+  repository: docker.io/msnedu94/frontend
   pullPolicy: IfNotPresent
   tag: "latest"
+imagePullSecrets:
+  - name: docker-creds
 
 service:
   type: ClusterIP
