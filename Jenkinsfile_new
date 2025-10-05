@@ -104,11 +104,12 @@ pipeline {
 	            
                           # Deploy/update Helm chart
                           helm upgrade --install ${IMAGE_NAME} ${HELM_CHART_PATH} \
-                            --namespace ${K8S_NAMESPACE} \
-                            --set image.repository=${DOCKER_REGISTRY}/${DOCKER_REPO}/${IMAGE_NAME} \
-                            --set image.tag=${IMAGE_TAG} \
+                            --namespace my-application \
+                            --set image.repository= docker.io/msnedu94/frontend \
+                            --set image.tag=latest \
                             --set imagePullSecrets[0].name=docker-creds \
                             --wait --timeout 5m
+                            --force
                         """
                     }
                 }
