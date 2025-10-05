@@ -1,0 +1,16 @@
+apiVersion: v2
+name: devops-academy-app
+description: Complete DevOps Academy application umbrella chart
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+
+dependencies:
+  - name: devops-academy-frontend
+    version: "1.0.0"
+    repository: "file://../../frontend/helm"
+    condition: frontend.enabled
+
+maintainers:
+  - name: DevOps Academy
+    email: devops@academy.com

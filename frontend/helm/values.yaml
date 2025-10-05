@@ -1,0 +1,67 @@
+replicaCount: 3
+
+image:
+  repository: devops-academy/frontend
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 80
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: devops-academy.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: devops-academy-tls
+      hosts:
+        - devops-academy.example.com
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+env:
+  - name: VITE_SUPABASE_URL
+    valueFrom:
+      secretKeyRef:
+        name: supabase-credentials
+        key: url
+  - name: VITE_SUPABASE_ANON_KEY
+    valueFrom:
+      secretKeyRef:
+        name: supabase-credentials
+        key: anon-key
+
+livenessProbe:
+  httpGet:
+    path: /
+    port: 80
+  initialDelaySeconds: 30
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /
+    port: 80
+  initialDelaySeconds: 5
+  periodSeconds: 5

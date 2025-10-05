@@ -1,2 +1,1 @@
-# my-website
-my-website
+my_company_website

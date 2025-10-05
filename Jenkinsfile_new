@@ -1,0 +1,168 @@
+pipeline {
+    agent { label 'linux_node' }
+
+    environment {
+        DOCKER_REGISTRY = 'docker.io'   // your Harbor server
+        DOCKER_REPO = 'msnedu94'       // Harbor project name
+        IMAGE_NAME = 'frontend'
+        HELM_CHART_PATH = './frontend/helm'
+        K8S_NAMESPACE = 'my-application'
+        GIT_COMMIT_SHORT = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+        IMAGE_TAG = "${GIT_COMMIT_SHORT}-${env.BUILD_NUMBER}"
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+                echo "Checked out commit: ${GIT_COMMIT_SHORT}"
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                script {
+                    sh '''
+                        npm ci
+                    '''
+                }
+            }
+        }
+
+        stage('Run Tests') {
+            steps {
+                script {
+                    sh '''
+                        npm run typecheck
+                        npm run lint
+                    '''
+                }
+            }
+        }
+
+        stage('Build Application') {
+            steps {
+                script {
+                    sh '''
+                        npm run build
+                    '''
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    sh """
+                        docker build -f frontend/Dockerfile \
+                            -t ${DOCKER_REGISTRY}/${DOCKER_REPO}/${IMAGE_NAME}:${GIT_COMMIT_SHORT} \
+                            -t ${DOCKER_REGISTRY}/${DOCKER_REPO}/${IMAGE_NAME}:latest \
+                            .
+                    """
+                }
+            }
+        }
+
+        stage('Push Docker Image') {
+        //    when {
+        //        branch 'main'
+        //    }
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: 'docker_hub',
+                                                     usernameVariable: 'DOCKER_USER',
+                                                     passwordVariable: 'DOCKER_PASS')]) {
+                        sh """
+                            echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin ${DOCKER_REGISTRY}
+                            docker push ${DOCKER_REGISTRY}/${DOCKER_REPO}/${IMAGE_NAME}:${GIT_COMMIT_SHORT}
+                            docker push ${DOCKER_REGISTRY}/${DOCKER_REPO}/${IMAGE_NAME}:latest
+                        """
+                    }
+                }
+            }
+        }
+
+        //stage('Helm Lint') {
+        //    steps {
+        //        script {
+        //            sh """
+        //                helm lint ${HELM_CHART_PATH}
+        //            """
+        //        }
+        //    }
+        //}
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                script {
+                    withKubeConfig([credentialsId: 'jenkins-kubeconfig']) {
+                        sh """
+                          set -x
+                          kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                          helm upgrade --install ${IMAGE_NAME} ${HELM_CHART_PATH} \
+                            --namespace ${K8S_NAMESPACE} \
+                            --set image.repository=${DOCKER_REGISTRY}/${DOCKER_REPO}/${IMAGE_NAME} \
+                            --set image.tag=${IMAGE_TAG} \
+                            --set imagePullSecrets[0].name=docker-creds \
+                            --wait --timeout 5m
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Verify Deployment') {
+            steps {
+                script {
+                    sh """
+                        kubectl rollout status deployment/${IMAGE_NAME} -n ${K8S_NAMESPACE}
+                        kubectl get pods -n ${K8S_NAMESPACE} -l app=${IMAGE_NAME}
+                    """
+                }
+            }
+        }
+
+        // stage('Run Smoke Tests') {
+        //     when {
+        //         branch 'main'
+        //     }
+        //     steps {
+        //         script {
+        //             sh """
+        //                 # Wait for service to be ready
+        //                 sleep 10
+        //                 # Get service endpoint and test
+        //                 ENDPOINT=\$(kubectl get ingress devops-academy-frontend-ingress -n ${K8S_NAMESPACE} -o jsonpath='{.spec.rules[0].host}')
+        //                 curl -f http://\$ENDPOINT || exit 1
+        //             """
+        //         }
+        //     }
+        // }
+    }
+
+    post {
+        success {
+            echo 'Pipeline completed successfully!'
+            emailext(
+                subject: "SUCCESS: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]'",
+                body: """Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' completed successfully.
+
+                Check console output at ${env.BUILD_URL}""",
+                to: 'kmadhusudhan19948@gmail.com'
+            )
+        }
+        failure {
+            echo 'Pipeline failed!'
+            emailext(
+                subject: "FAILED: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]'",
+                body: """Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' failed.
+
+                Check console output at ${env.BUILD_URL}""",
+                to: 'kmadhusudhan19948@gmail.com'
+            )
+        }
+        always {
+            cleanWs()
+        }
+    }
+}

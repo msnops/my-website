@@ -1,0 +1,21 @@
+frontend:
+  enabled: true
+  replicaCount: 3
+  image:
+    repository: devops-academy/frontend
+    tag: "latest"
+  ingress:
+    enabled: true
+    className: "nginx"
+    hosts:
+      - host: devops-academy.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+
+global:
+  environment: production
+
+supabase:
+  url: "https://your-project.supabase.co"
+  anonKey: "your-anon-key-here"
